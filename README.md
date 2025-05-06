@@ -16,7 +16,7 @@ Architecture: basic Conv2D + MaxPooling + Dense layers.
 ⚠️ Known Issue
 'II' is always predicted as 'V'.
 
-#### 🧩 Subnet Model (2-5-5th.keras)
+#### 🧩 Subnet Model (2-5-9th.keras)
 A binary classifier to distinguish between 'II' and 'V' more precisely.
 
 Activated only when main model predicts 'V'.
