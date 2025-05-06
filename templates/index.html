@@ -94,8 +94,8 @@
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 20;
-        ctx.lineCap = 'butt';
-        ctx.lineJoin = 'miter';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'smooth';
 
         // Drawing event listeners
         canvas.addEventListener('mousedown', startDrawing);

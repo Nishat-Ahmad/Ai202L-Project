@@ -6,6 +6,7 @@ import tensorflow as tf
 import base64
 from PIL import ImageOps
 import logging
+from scipy.ndimage import rotate
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -13,13 +14,22 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Load the model
+# Load main model
 try:
-    model = tf.keras.models.load_model('mrwhite.keras')
-    logger.info("Model loaded successfully")
+    model = tf.keras.models.load_model('Except2.keras')
+    logger.info("Main model loaded successfully")
 except Exception as e:
-    logger.error(f"Error loading model: {e}")
+    logger.error(f"Error loading main model: {e}")
     model = None
+
+# Load II-V subnet model
+try:
+    subnet_model = tf.keras.models.load_model('2-5-9th.keras')
+    logger.info("Subnet model (II vs V) loaded successfully")
+except Exception as e:
+    logger.error(f"Error loading subnet model: {e}")
+    subnet_model = None
+
 
 # Define your Roman numeral classes in the same order as your model's output
 ROMAN_CLASSES = ['I', 'II', 'III', 'IV', 'IX', 'V', 'VI', 'VII', 'VIII', 'X']
@@ -114,6 +124,46 @@ def preprocess_image(image_data):
         logger.error(f"Error in preprocessing image: {e}")
         raise
 
+def preprocess_image25(image_data):
+    """
+    Preprocess the image data for model prediction
+    """
+    try:
+        # Convert base64 image data to PIL Image
+        if isinstance(image_data, str) and image_data.startswith('data:image'):
+            image_data = image_data.split(',')[1]
+        
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # Debug: Save the original image
+        image.save('debug_original.png')
+        
+        # Convert to grayscale
+        image = image.convert('L')
+        image.save('debug_cropped.png')
+        
+        # Debug: Save the inverted image
+        image.save('debug_inverted.png')
+        
+        # Resize to 28x28
+        image = image.resize((28, 28))
+        
+        # Debug: Save the final processed input image
+        image.save('debug_input.png')
+        
+        # Convert to numpy array and normalize
+        image_array = np.array(image)
+        image_array = image_array.reshape(1, 28, 28, 1)
+        image_array = image_array.astype('float32') / 255.0
+        
+        logger.debug(f"Processed image shape: {image_array.shape}")
+        return image_array
+    
+    except Exception as e:
+        logger.error(f"Error in preprocessing image: {e}")
+        raise
+
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -121,36 +171,50 @@ def home():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # Get the image data from the request
         data = request.get_json()
-        logger.debug("Received prediction request")
         image_data = data.get('image')
         
         if not image_data:
             return jsonify({'error': 'No image data received'}), 400
-        
-        # Preprocess the image
+
         processed_image = preprocess_image(image_data)
-        
+
         if model is None:
-            return jsonify({'error': 'Model not loaded'}), 500
-        
-        # Make prediction
+            return jsonify({'error': 'Main model not loaded'}), 500
+
+        # First prediction from main model
         prediction = model.predict(processed_image)
         predicted_index = np.argmax(prediction[0])
         predicted_roman = ROMAN_CLASSES[predicted_index]
-        confidence = float(prediction[0][predicted_index])
-        
-        logger.debug(f"Prediction: {predicted_roman}, Confidence: {confidence}")
-        
+        main_confidence = float(prediction[0][predicted_index])
+
+        # If predicted as "V", double-check using subnet
+        if predicted_roman == "V" and subnet_model is not None:
+            image_data = preprocess_image25(image_data)
+            subnet_pred = subnet_model.predict(image_data)
+            subnet_conf = float(subnet_pred[0][0])
+            is_two = subnet_conf > 0.5  # Adjust threshold if needed
+            if not is_two:
+                flip_img = np.fliplr(image_data[0])  # remove batch dim, flip, then add batch back
+                flip_img = image_data.reshape(1, 28, 28, 1)
+                pred = subnet_model.predict(flip_img)[0][0]
+                prediction = "V" if pred > 0.5 else "II"
+                if prediction == "V":
+                    img_rotated = rotate(image_data[0], angle=45, reshape=False)
+                    img_rotated = img_rotated.reshape(1, 28, 28, 1)
+                    pred = subnet_model.predict(img_rotated)[0][0]
+                    prediction = "V" if pred > 0.5 else "II"
+
         return jsonify({
             'prediction': predicted_roman,
-            'confidence': confidence
+            'confidence': main_confidence,
+            'source': 'main'
         })
-    
+
     except Exception as e:
         logger.error(f"Error during prediction: {e}")
         return jsonify({'error': str(e)}), 400
+
 
 if __name__ == '__main__':
     app.run(debug=True)
